@@ -69,8 +69,8 @@ final class WhisperProvider: TranscriptionProvider {
             return 300 * 1024 * 1024
         case "ggml-medium.bin":
             return 1000 * 1024 * 1024
-        // case "ggml-large-v3-turbo.bin": // buggy - so removed temporarily
-        //     return 1200 * 1024 * 1024
+        case "ggml-large-v3-turbo.bin":
+            return 1200 * 1024 * 1024
         case "ggml-large-v3.bin":
             return 2000 * 1024 * 1024
         default:
