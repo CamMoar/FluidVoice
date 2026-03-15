@@ -172,7 +172,6 @@ final class TranscriptionHistoryStore: ObservableObject {
             DebugLogger.shared.error("TextFileExport: write failed for \(fileURL.path): \(error)", source: "TranscriptionHistoryStore")
         }
     }
-    }
 
     /// Delete a specific entry
     func deleteEntry(id: UUID) {
