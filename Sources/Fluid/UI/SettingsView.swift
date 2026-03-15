@@ -48,6 +48,10 @@ struct SettingsView: View {
     @State private var rollbackVersion: String = ""
     @State private var isRollingBack: Bool = false
 
+    // Text file export state (PATCH)
+    @State private var textFileSavingEnabled: Bool = SettingsStore.shared.transcriptionTextFileSavingEnabled
+    @State private var textFileSaveDirectory: URL = SettingsStore.shared.transcriptionTextFileSaveDirectory
+
     let hotkeyManager: GlobalHotkeyManager?
     let menuBarManager: MenuBarManager
     let startRecording: () -> Void
@@ -578,6 +582,47 @@ struct SettingsView: View {
                                     )
                                     Divider().opacity(0.2)
 
+                                    // PATCH: Text file export row
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        self.optionToggleRow(
+                                            title: "Save Transcriptions as Text Files",
+                                            description: "Write each completed transcription to a daily .txt file in the folder below.",
+                                            isOn: Binding(
+                                                get: { self.textFileSavingEnabled },
+                                                set: {
+                                                    self.textFileSavingEnabled = $0
+                                                    SettingsStore.shared.transcriptionTextFileSavingEnabled = $0
+                                                }
+                                            )
+                                        )
+                                        if self.textFileSavingEnabled {
+                                            HStack(spacing: 8) {
+                                                Text(self.textFileSaveDirectory.path)
+                                                    .font(.caption)
+                                                    .foregroundColor(.secondary)
+                                                    .lineLimit(1)
+                                                    .truncationMode(.middle)
+                                                Spacer()
+                                                Button("Change") {
+                                                    let panel = NSOpenPanel()
+                                                    panel.canChooseFiles = false
+                                                    panel.canChooseDirectories = true
+                                                    panel.canCreateDirectories = true
+                                                    panel.allowsMultipleSelection = false
+                                                    panel.prompt = "Select Folder"
+                                                    if panel.runModal() == .OK, let url = panel.url {
+                                                        SettingsStore.shared.transcriptionTextFileSaveDirectory = url
+                                                        self.textFileSaveDirectory = url
+                                                    }
+                                                }
+                                                .buttonStyle(.borderless)
+                                                .font(.caption)
+                                            }
+                                            .padding(.horizontal, 12)
+                                            .padding(.bottom, 4)
+                                        }
+                                    }
+                                    Divider().opacity(0.2)
                                     self.optionToggleRow(
                                         title: "Weekends Don't Break Streak",
                                         description: "Skip Saturday and Sunday when calculating usage streaks. Perfect for weekday-only users.",

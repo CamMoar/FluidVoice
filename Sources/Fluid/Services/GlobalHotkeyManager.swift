@@ -343,28 +343,9 @@ final class GlobalHotkeyManager: NSObject {
                 await PostTranscriptionEditTracker.shared.handleKeyDown(keyCode: keyCode, modifiers: eventModifiers)
             }
 
-            // Check Escape key first (keyCode 53) - cancels recording and closes mode views
-            if keyCode == 53, eventModifiers.isEmpty {
-                var handled = false
-
-                if self.asrService.isRunning {
-                    DebugLogger.shared.info("Escape pressed - cancelling recording", source: "GlobalHotkeyManager")
-                    Task { @MainActor in
-                        await self.asrService.stopWithoutTranscription()
-                    }
-                    handled = true
-                }
-
-                // Trigger cancel callback to close mode views / reset state
-                if let callback = cancelCallback, callback() {
-                    DebugLogger.shared.info("Escape pressed - cancel callback handled", source: "GlobalHotkeyManager")
-                    handled = true
-                }
-
-                if handled {
-                    return nil // Consume event only if we did something
-                }
-            }
+            // PATCH: Escape key (keyCode 53) cancel behaviour disabled.
+            // Previously this would call stopWithoutTranscription() and discard the current dictation.
+            // Now Escape passes through unhandled so the transcription is preserved.
 
             // Check command mode hotkey first
             if self.commandModeShortcutEnabled, self.matchesCommandModeShortcut(keyCode: keyCode, modifiers: eventModifiers) {

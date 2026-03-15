@@ -84,6 +84,10 @@ final class SettingsStore: ObservableObject {
         static let userTypingWPM = "UserTypingWPM"
         static let saveTranscriptionHistory = "SaveTranscriptionHistory"
 
+        // Text File Export
+        static let transcriptionTextFileSavingEnabled = "TranscriptionTextFileSavingEnabled"
+        static let transcriptionTextFileSaveDirectory = "TranscriptionTextFileSaveDirectory"
+
         // Filler Words
         static let fillerWords = "FillerWords"
         static let removeFillerWordsEnabled = "RemoveFillerWordsEnabled"
@@ -1609,6 +1613,51 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    // MARK: - Text File Export (PATCH)
+
+    /// When enabled, each completed transcription is also written to a plain .txt file.
+    var transcriptionTextFileSavingEnabled: Bool {
+        get {
+            let value = self.defaults.object(forKey: Keys.transcriptionTextFileSavingEnabled)
+            return value as? Bool ?? false
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.transcriptionTextFileSavingEnabled)
+        }
+    }
+
+    /// Directory URL where .txt transcription files are saved.
+    /// Defaults to ~/Documents/FluidVoice Transcriptions/
+    var transcriptionTextFileSaveDirectory: URL {
+        get {
+            if let bookmarkData = self.defaults.data(forKey: Keys.transcriptionTextFileSaveDirectory) {
+                var isStale = false
+                if let resolved = try? URL(
+                    resolvingBookmarkData: bookmarkData,
+                    options: .withSecurityScope,
+                    relativeTo: nil,
+                    bookmarkDataIsStale: &isStale
+                ) {
+                    return resolved
+                }
+            }
+            // Default: ~/Documents/FluidVoice Transcriptions/
+            let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+            return docs.appendingPathComponent("FluidVoice Transcriptions", isDirectory: true)
+        }
+        set {
+            objectWillChange.send()
+            if let bookmark = try? newValue.bookmarkData(
+                options: .withSecurityScope,
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            ) {
+                self.defaults.set(bookmark, forKey: Keys.transcriptionTextFileSaveDirectory)
+            }
+        }
+    }
+
     // MARK: - Private Methods
 
     private func persistProviderAPIKeys(_ values: [String: String]) {
@@ -2042,7 +2091,7 @@ final class SettingsStore: ObservableObject {
             case .whisperBase: return "Whisper Base"
             case .whisperSmall: return "Whisper Small"
             case .whisperMedium: return "Whisper Medium"
-            case .whisperLargeTurbo: return "Whisper Large Turbo (Disabled)"
+            case .whisperLargeTurbo: return "Whisper Large Turbo"
             case .whisperLarge: return "Whisper Large"
             }
         }
@@ -2136,9 +2185,7 @@ final class SettingsStore: ObservableObject {
         /// Returns models available for the current Mac's architecture and OS
         static var availableModels: [SpeechModel] {
             allCases.filter { model in
-                if model == .whisperLargeTurbo {
-                    return false
-                }
+                // PATCH: whisperLargeTurbo re-enabled (was disabled upstream)
                 if model == .qwen3Asr, !Self.qwenPreviewEnabled {
                     return false
                 }

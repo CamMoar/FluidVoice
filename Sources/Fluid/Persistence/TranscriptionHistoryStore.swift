@@ -112,7 +112,66 @@ final class TranscriptionHistoryStore: ObservableObject {
 
         self.saveEntries()
 
+        // PATCH: Also write to a plain text file if the feature is enabled
+        if SettingsStore.shared.transcriptionTextFileSavingEnabled {
+            self.writeTextFile(for: entry)
+        }
+
         DebugLogger.shared.debug("Added transcription to history (total: \(self.entries.count))", source: "TranscriptionHistoryStore")
+    }
+
+    // MARK: - Text File Export (PATCH)
+
+    /// Writes a single transcription entry to a dated .txt file in the configured directory.
+    /// File format: one file per day, entries appended with timestamp headers.
+    private func writeTextFile(for entry: TranscriptionHistoryEntry) {
+        let dir = SettingsStore.shared.transcriptionTextFileSaveDirectory
+        let fm = FileManager.default
+
+        // Ensure directory exists
+        if !fm.fileExists(atPath: dir.path) {
+            do {
+                try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            } catch {
+                DebugLogger.shared.error("TextFileExport: failed to create directory \(dir.path): \(error)", source: "TranscriptionHistoryStore")
+                return
+            }
+        }
+
+        // One file per calendar day: "2026-03-15.txt"
+        let dayFormatter = DateFormatter()
+        dayFormatter.dateFormat = "yyyy-MM-dd"
+        let fileName = dayFormatter.string(from: entry.timestamp) + ".txt"
+        let fileURL = dir.appendingPathComponent(fileName)
+
+        // Timestamp header for each entry inside the daily file
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateFormat = "HH:mm:ss"
+        let timeString = timeFormatter.string(from: entry.timestamp)
+
+        let appInfo = entry.appName.isEmpty ? "" : " [\(entry.appName)]"
+        let header = "[\(timeString)\(appInfo)]\n"
+        let body = entry.processedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let block = header + body + "\n\n"
+
+        do {
+            if fm.fileExists(atPath: fileURL.path) {
+                // Append to existing daily file
+                let handle = try FileHandle(forWritingTo: fileURL)
+                handle.seekToEndOfFile()
+                if let data = block.data(using: .utf8) {
+                    handle.write(data)
+                }
+                handle.closeFile()
+            } else {
+                // Create new file
+                try block.write(to: fileURL, atomically: true, encoding: .utf8)
+            }
+            DebugLogger.shared.debug("TextFileExport: wrote to \(fileURL.lastPathComponent)", source: "TranscriptionHistoryStore")
+        } catch {
+            DebugLogger.shared.error("TextFileExport: write failed for \(fileURL.path): \(error)", source: "TranscriptionHistoryStore")
+        }
+    }
     }
 
     /// Delete a specific entry
