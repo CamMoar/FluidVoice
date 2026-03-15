@@ -75,10 +75,11 @@ jobs:
           # Use upstream tag if available, else use date
           UPSTREAM_TAG=$(git describe upstream/main --tags --abbrev=0 2>/dev/null || echo "")
           DATE_TAG=$(date +%Y.%m.%d)
+          SHORT_SHA=$(git rev-parse --short HEAD)
           if [ -n "$UPSTREAM_TAG" ]; then
-            echo "tag=patched-${UPSTREAM_TAG}-${DATE_TAG}" >> "$GITHUB_OUTPUT"
+            echo "tag=patched-${UPSTREAM_TAG}-${DATE_TAG}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=patched-${DATE_TAG}" >> "$GITHUB_OUTPUT"
+            echo "tag=patched-${DATE_TAG}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Check if release tag already exists
@@ -122,6 +123,26 @@ jobs:
         if: steps.release_check.outputs.exists == 'false'
         run: |
           APP_PATH=$(find build/output -name "*.app" | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Could not find built .app bundle"
+            exit 1
+          fi
+
+          # Ensure dynamically linked package frameworks are embedded in the app bundle.
+          # Without this, app launches can fail with DYLD missing-library errors.
+          mkdir -p "$APP_PATH/Contents/Frameworks"
+          if [ -d "build/output/PackageFrameworks" ]; then
+            cp -R build/output/PackageFrameworks/*.framework "$APP_PATH/Contents/Frameworks/" 2>/dev/null || true
+            cp -R build/output/PackageFrameworks/*.dylib "$APP_PATH/Contents/Frameworks/" 2>/dev/null || true
+          fi
+
+          # Hard fail if key runtime framework is missing.
+          if [ ! -d "$APP_PATH/Contents/Frameworks/MediaRemoteAdapter.framework" ]; then
+            echo "MediaRemoteAdapter.framework missing from app bundle"
+            ls -la "$APP_PATH/Contents/Frameworks" || true
+            exit 1
+          fi
+
           echo "Packaging $APP_PATH"
           cd build/output
           zip -r "FluidVoice-patched.zip" "$(basename "$APP_PATH")"
@@ -152,7 +173,7 @@ jobs:
             **Install:**
             1. Download `FluidVoice-patched.zip` below
             2. Unzip it
-            3. Move `Fluid.app` to `/Applications/`
+            3. Move `FluidVoice.app` to `/Applications/`
             4. Right-click → Open on first launch (bypasses unsigned app warning)
           files: ${{ env.APP_ZIP }}
           draft: false
