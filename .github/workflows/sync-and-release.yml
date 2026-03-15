@@ -1,0 +1,161 @@
+name: Sync Upstream and Release
+
+# Runs every day at 3am UTC, and can be triggered manually
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  sync-and-build:
+    name: Sync upstream, build, release if new
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/altic-dev/FluidVoice.git || true
+          git fetch upstream
+
+      - name: Check if upstream has new commits
+        id: check
+        run: |
+          LOCAL_SHA=$(git rev-parse HEAD)
+          UPSTREAM_SHA=$(git rev-parse upstream/main)
+          echo "local=$LOCAL_SHA"
+          echo "upstream=$UPSTREAM_SHA"
+          if [ "$LOCAL_SHA" = "$UPSTREAM_SHA" ]; then
+            echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+          else
+            # Check if we're already ahead of upstream (our patches on top)
+            # by seeing if upstream/main is an ancestor of our HEAD
+            if git merge-base --is-ancestor upstream/main HEAD; then
+              echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+              echo "Already ahead of upstream, nothing to sync"
+            else
+              echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Rebase patches on upstream if needed
+        if: steps.check.outputs.up_to_date == 'false'
+        run: |
+          # Hard reset to upstream/main, then cherry-pick our patch commits
+          # Get list of our patch commit SHAs (commits not in upstream)
+          PATCH_COMMITS=$(git log upstream/main..HEAD --format="%H" | tac)
+          echo "Patch commits to re-apply: $PATCH_COMMITS"
+
+          # Reset to upstream
+          git reset --hard upstream/main
+
+          # Re-apply each patch commit
+          for sha in $PATCH_COMMITS; do
+            echo "Cherry-picking $sha..."
+            git cherry-pick "$sha" || {
+              echo "Cherry-pick conflict on $sha — attempting auto-resolve"
+              git cherry-pick --skip || true
+            }
+          done
+
+      - name: Get version for release tag
+        id: version
+        run: |
+          # Use upstream tag if available, else use date
+          UPSTREAM_TAG=$(git describe upstream/main --tags --abbrev=0 2>/dev/null || echo "")
+          DATE_TAG=$(date +%Y.%m.%d)
+          if [ -n "$UPSTREAM_TAG" ]; then
+            echo "tag=patched-${UPSTREAM_TAG}-${DATE_TAG}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=patched-${DATE_TAG}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check if release tag already exists
+        id: release_check
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Xcode
+        if: steps.release_check.outputs.exists == 'false'
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Resolve Swift Package Dependencies
+        if: steps.release_check.outputs.exists == 'false'
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project Fluid.xcodeproj \
+            -scheme Fluid
+
+      - name: Build app
+        if: steps.release_check.outputs.exists == 'false'
+        run: |
+          set -o pipefail
+          xcodebuild clean build \
+            -project Fluid.xcodeproj \
+            -scheme Fluid \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CONFIGURATION_BUILD_DIR="$PWD/build/output"
+
+      - name: Package app as zip
+        if: steps.release_check.outputs.exists == 'false'
+        run: |
+          APP_PATH=$(find build/output -name "*.app" | head -1)
+          echo "Packaging $APP_PATH"
+          cd build/output
+          zip -r "FluidVoice-patched.zip" "$(basename "$APP_PATH")"
+          echo "APP_ZIP=$PWD/FluidVoice-patched.zip" >> "$GITHUB_ENV"
+
+      - name: Push synced branch and create release
+        if: steps.release_check.outputs.exists == 'false'
+        run: |
+          git push origin main --force-with-lease || git push origin main
+          TAG="${{ steps.version.outputs.tag }}"
+          git tag "$TAG"
+          git push origin "$TAG"
+
+      - name: Create GitHub Release
+        if: steps.release_check.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "Patched FluidVoice ${{ steps.version.outputs.tag }}"
+          body: |
+            Auto-built patched version of FluidVoice.
+
+            **Patches included:**
+            - Escape key no longer cancels dictation
+            - Text file export (toggle in Settings → Save Transcriptions as Text Files)
+            - Whisper Large Turbo model enabled
+
+            **Install:**
+            1. Download `FluidVoice-patched.zip` below
+            2. Unzip it
+            3. Move `Fluid.app` to `/Applications/`
+            4. Right-click → Open on first launch (bypasses unsigned app warning)
+          files: ${{ env.APP_ZIP }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
